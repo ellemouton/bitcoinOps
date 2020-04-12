@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/aes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,10 +10,22 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcutil/base58"
-	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/scrypt"
+	"golang.org/x/text/unicode/norm"
 )
 
 var curve = btcec.S256()
+
+const (
+	P2PKHAddressVersion = 0x00
+	P2SHAddressVersion  = 0x05
+	WifVersion          = 0x80
+
+	CompPrivKeySuffix    = 0x01
+	UncompPubKeyPrefix   = 0x04
+	CompEvenPubKeyPrefix = 0x02
+	CompOddPubKeyPrefix  = 0x03
+)
 
 type PublicKey struct {
 	x          *big.Int
@@ -23,12 +35,12 @@ type PublicKey struct {
 
 func (p *PublicKey) Raw() []byte {
 	if !p.compressed {
-		return append([]byte{0x04}, append(p.x.Bytes(), p.y.Bytes()...)...)
+		return append([]byte{UncompPubKeyPrefix}, append(p.x.Bytes(), p.y.Bytes()...)...)
 	}
 	if p.y.Bit(0) == 0 {
-		return append([]byte{0x02}, p.x.Bytes()...)
+		return append([]byte{CompEvenPubKeyPrefix}, p.x.Bytes()...)
 	}
-	return append([]byte{0x03}, p.x.Bytes()...)
+	return append([]byte{CompOddPubKeyPrefix}, p.x.Bytes()...)
 }
 
 func (p *PublicKey) Hex() string {
@@ -36,16 +48,11 @@ func (p *PublicKey) Hex() string {
 }
 
 func (p *PublicKey) Hash() []byte {
-	h256 := sha256.New()
-	h256.Write(p.Raw())
-
-	rip160 := ripemd160.New()
-	rip160.Write(h256.Sum(nil))
-
-	return rip160.Sum(nil)
+	return Hash160(p.Raw())
 }
+
 func (p *PublicKey) Address() string {
-	return base58.CheckEncode(p.Hash(), 0x00)
+	return base58.CheckEncode(p.Hash(), P2PKHAddressVersion)
 }
 
 type PrivateKey struct {
@@ -55,7 +62,7 @@ type PrivateKey struct {
 
 func (p *PrivateKey) Raw() []byte {
 	if p.pubkey.compressed {
-		return append(p.k.Bytes(), 0x01)
+		return append(p.k.Bytes(), CompPrivKeySuffix)
 	}
 	return p.k.Bytes()
 }
@@ -65,11 +72,59 @@ func (p *PrivateKey) Hex() string {
 }
 
 func (p *PrivateKey) Wif() string {
-	return base58.CheckEncode(p.Raw(), 0x80)
+	return base58.CheckEncode(p.Raw(), WifVersion)
 }
 
 func (p *PrivateKey) Info() string {
-	return fmt.Sprintf("Compressed: %v\nHex: %v\nWIF: %v\nAddress: %v\n", p.pubkey.compressed, p.Hex(), p.Wif(), p.pubkey.Address())
+	return fmt.Sprintf("Compressed: %v\nHex: %v\nWIF: %v\nAddress: %v\n", p.pubkey.compressed, p.Hex(), p.Wif(), p.Address())
+}
+
+func (p *PrivateKey) Address() string {
+	return p.pubkey.Address()
+}
+
+func (p *PrivateKey) Encrypt(pass string) (*PrivateKey, error) {
+	passphrase := norm.NFC.String(pass)
+	privKey := p.Raw()
+	addresshash := DoubleSha256([]byte(p.Address()))[:4]
+
+	scryptKey, err := scrypt.Key([]byte(passphrase), addresshash, 16384, 8, 8, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	derivedhalf1, derivedhalf2 := scryptKey[:32], scryptKey[32:]
+
+	block, err := aes.NewCipher(derivedhalf2)
+	if err != nil {
+		return nil, err
+	}
+
+	data1, err := XOR(privKey[:16], derivedhalf1[:16])
+	if err != nil {
+		return nil, err
+	}
+
+	data2, err := XOR(privKey[16:], derivedhalf1[16:])
+	if err != nil {
+		return nil, err
+	}
+
+	encryptedhalf1, encryptedhalf2 := make([]byte, 16), make([]byte, 16)
+	block.Encrypt(encryptedhalf1, data1)
+	block.Encrypt(encryptedhalf2, data2)
+
+	flagbyte := 0x00
+	flagbyte ^= 0xc0 // non-EC mutliplied only for now
+
+	if p.pubkey.compressed {
+		flagbyte ^= 0x20
+	}
+
+	final := append([]byte{0x42, byte(flagbyte)}, append(addresshash, append(encryptedhalf1, encryptedhalf2...)...)...)
+	fmt.Println(base58.CheckEncode(final, 0x01))
+
+	return nil, nil
 }
 
 // New creates a new PrivateKey by generating a random number
@@ -105,7 +160,7 @@ func NewFromHex(h []byte) (*PrivateKey, error) {
 	if len(h) == 32 {
 		compressed = false
 		k.SetBytes(h)
-	} else if len(h) == 33 && h[32] == 0x01 {
+	} else if len(h) == 33 && h[32] == CompPrivKeySuffix {
 		compressed = true
 		k.SetBytes(h[:32])
 	} else {
@@ -123,4 +178,17 @@ func NewFromHex(h []byte) (*PrivateKey, error) {
 		k:      k,
 		pubkey: pubKey,
 	}, nil
+}
+
+func NewFromWif(s string) (*PrivateKey, error) {
+	b, version, err := base58.CheckDecode(s)
+	if err != nil {
+		return nil, err
+	}
+
+	if version != WifVersion {
+		return nil, errors.New("Invalid Wif")
+	}
+
+	return NewFromHex(b)
 }
