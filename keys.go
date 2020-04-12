@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/aes"
 	"crypto/rand"
 	"encoding/hex"
@@ -178,7 +179,17 @@ func Decrypt(privKey, pass string) (*PrivateKey, error) {
 		decryptedKey = append(decryptedKey, CompPrivKeySuffix)
 	}
 
-	return NewFromHex(decryptedKey)
+	pk, err := NewFromHex(decryptedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	addresshash := DoubleSha256([]byte(pk.Address()))[:4]
+	if bytes.Compare(addresshash, salt) != 0 {
+		return nil, errors.New("Invalid passphrase")
+	}
+
+	return pk, nil
 }
 
 // New creates a new PrivateKey by generating a random number
