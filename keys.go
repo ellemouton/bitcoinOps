@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
+	"strings"
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcutil/base58"
@@ -237,9 +240,17 @@ func NewFromWif(s string) (*PrivateKey, error) {
 		return nil, err
 	}
 
-	if version != WifVersion {
-		return nil, errors.New("Invalid Wif")
-	}
+	if version == WifVersion {
+		return NewFromHex(b)
+	} else if version == Bip38PrefixByte1 && b[0] == Bip38PrefixByte2 {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Enter Passphrase: ")
+		passphrase, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
 
-	return NewFromHex(b)
+		return Decrypt(s, strings.TrimSpace(passphrase))
+	}
+	return nil, errors.New("Invalid Wif")
 }
