@@ -25,6 +25,9 @@ const (
 	UncompPubKeyPrefix   = 0x04
 	CompEvenPubKeyPrefix = 0x02
 	CompOddPubKeyPrefix  = 0x03
+
+	Bip38PrefixByte1 = 0x01
+	Bip38PrefixByte2 = 0x42
 )
 
 type PublicKey struct {
@@ -83,31 +86,31 @@ func (p *PrivateKey) Address() string {
 	return p.pubkey.Address()
 }
 
-func (p *PrivateKey) Encrypt(pass string) (*PrivateKey, error) {
+func (p *PrivateKey) Encrypt(pass string) (string, error) {
 	passphrase := norm.NFC.String(pass)
 	privKey := p.Raw()
 	addresshash := DoubleSha256([]byte(p.Address()))[:4]
 
 	scryptKey, err := scrypt.Key([]byte(passphrase), addresshash, 16384, 8, 8, 64)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	derivedhalf1, derivedhalf2 := scryptKey[:32], scryptKey[32:]
 
 	block, err := aes.NewCipher(derivedhalf2)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	data1, err := XOR(privKey[:16], derivedhalf1[:16])
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	data2, err := XOR(privKey[16:], derivedhalf1[16:])
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	encryptedhalf1, encryptedhalf2 := make([]byte, 16), make([]byte, 16)
@@ -121,10 +124,58 @@ func (p *PrivateKey) Encrypt(pass string) (*PrivateKey, error) {
 		flagbyte ^= 0x20
 	}
 
-	final := append([]byte{0x42, byte(flagbyte)}, append(addresshash, append(encryptedhalf1, encryptedhalf2...)...)...)
-	fmt.Println(base58.CheckEncode(final, 0x01))
+	final := append([]byte{Bip38PrefixByte2, byte(flagbyte)}, append(addresshash, append(encryptedhalf1, encryptedhalf2...)...)...)
+	return base58.CheckEncode(final, Bip38PrefixByte1), nil
+}
 
-	return nil, nil
+func Decrypt(privKey, pass string) (*PrivateKey, error) {
+	passphrase := norm.NFC.String(pass)
+	b, version, err := base58.CheckDecode(privKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if version != Bip38PrefixByte1 || b[0] != Bip38PrefixByte2 {
+		return nil, errors.New("Invalid bip28 encrypted privkey")
+	}
+
+	compFlag := b[1] & 0x02
+
+	salt := b[2:6]
+
+	scryptKey, err := scrypt.Key([]byte(passphrase), salt, 16384, 8, 8, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	derivedhalf1, derivedhalf2 := scryptKey[:32], scryptKey[32:]
+
+	block, err := aes.NewCipher(derivedhalf2)
+	if err != nil {
+		return nil, err
+	}
+
+	decryptedhalf1, decryptedhalf2 := make([]byte, 16), make([]byte, 16)
+	block.Decrypt(decryptedhalf1, b[6:22])
+	block.Decrypt(decryptedhalf2, b[22:])
+
+	data1, err := XOR(decryptedhalf1, derivedhalf1[:16])
+	if err != nil {
+		return nil, err
+	}
+
+	data2, err := XOR(decryptedhalf2, derivedhalf1[16:])
+	if err != nil {
+		return nil, err
+	}
+
+	decryptedKey := append(data1, data2...)
+
+	if compFlag != 0 {
+		decryptedKey = append(decryptedKey, CompPrivKeySuffix)
+	}
+
+	return NewFromHex(decryptedKey)
 }
 
 // New creates a new PrivateKey by generating a random number

@@ -22,6 +22,11 @@ func main() {
 	passphrase := "MyTestPassphrase"
 	fmt.Println(passphrase)
 
-	pk2.Encrypt(passphrase)
-	//fmt.Println(pk3.Info())
+	fmt.Println(pk2.Encrypt(passphrase))
+
+	pk3, err := Decrypt("6PRTHL6mWa48xSopbU1cKrVjpKbBZxcLRRCdctLJ3z5yxE87MobKoXdTsJ", passphrase)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(pk3.Info())
 }
