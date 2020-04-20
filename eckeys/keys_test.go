@@ -1,15 +1,16 @@
-package main
+package eckeys
 
 import (
 	"flag"
 	"fmt"
 	"log"
+	"testing"
 
 	bip32 "github.com/tyler-smith/go-bip32"
 	bip39 "github.com/tyler-smith/go-bip39"
 )
 
-func main() {
+func TestECKeys(t *testing.T) {
 	flag.Parse()
 
 	//	pk1 := New(*compressed)

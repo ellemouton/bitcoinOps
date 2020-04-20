@@ -1,4 +1,4 @@
-package main
+package eckeys
 
 import (
 	"bytes"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcutil/base58"
+	"github.com/ellemouton/bitcoinOps/helper"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/text/unicode/norm"
 )
@@ -52,7 +53,7 @@ func (p *PublicKey) Hex() string {
 }
 
 func (p *PublicKey) Hash() []byte {
-	return Hash160(p.Raw())
+	return helper.Hash160(p.Raw())
 }
 
 func (p *PublicKey) Address() string {
@@ -90,7 +91,7 @@ func (p *PrivateKey) Address() string {
 func (p *PrivateKey) Encrypt(pass string) (string, error) {
 	passphrase := norm.NFC.String(pass)
 	privKey := p.Raw()
-	addresshash := DoubleSha256([]byte(p.Address()))[:4]
+	addresshash := helper.DoubleSha256([]byte(p.Address()))[:4]
 
 	scryptKey, err := scrypt.Key([]byte(passphrase), addresshash, 16384, 8, 8, 64)
 	if err != nil {
@@ -104,12 +105,12 @@ func (p *PrivateKey) Encrypt(pass string) (string, error) {
 		return "", err
 	}
 
-	data1, err := XOR(privKey[:16], derivedhalf1[:16])
+	data1, err := helper.XOR(privKey[:16], derivedhalf1[:16])
 	if err != nil {
 		return "", err
 	}
 
-	data2, err := XOR(privKey[16:], derivedhalf1[16:])
+	data2, err := helper.XOR(privKey[16:], derivedhalf1[16:])
 	if err != nil {
 		return "", err
 	}
@@ -160,12 +161,12 @@ func Decrypt(privKey, pass string) (*PrivateKey, error) {
 	block.Decrypt(decryptedhalf1, b[6:22])
 	block.Decrypt(decryptedhalf2, b[22:])
 
-	data1, err := XOR(decryptedhalf1, derivedhalf1[:16])
+	data1, err := helper.XOR(decryptedhalf1, derivedhalf1[:16])
 	if err != nil {
 		return nil, err
 	}
 
-	data2, err := XOR(decryptedhalf2, derivedhalf1[16:])
+	data2, err := helper.XOR(decryptedhalf2, derivedhalf1[16:])
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +182,7 @@ func Decrypt(privKey, pass string) (*PrivateKey, error) {
 		return nil, err
 	}
 
-	addresshash := DoubleSha256([]byte(pk.Address()))[:4]
+	addresshash := helper.DoubleSha256([]byte(pk.Address()))[:4]
 	if bytes.Compare(addresshash, salt) != 0 {
 		return nil, errors.New("Invalid passphrase")
 	}

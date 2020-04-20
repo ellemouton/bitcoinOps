@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"flag"
 	"fmt"
 	"log"
@@ -9,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/btcsuite/btcutil/base58"
+	"github.com/ellemouton/bitcoinOps/helper"
 	"github.com/tyler-smith/go-bip32"
-	"golang.org/x/crypto/ripemd160"
 )
 
 func main() {
@@ -45,7 +44,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		addr := base58.CheckEncode(hash160(k.PublicKey().Key), 0x00)
+		addr := base58.CheckEncode(helper.Hash160(k.PublicKey().Key), 0x00)
 		fmt.Printf("m/%s/%d\t%s\n", *path, i, addr)
 	}
 	fmt.Println("--------------------------------------------")
@@ -79,14 +78,4 @@ func getPath(path string) ([]uint32, error) {
 	}
 
 	return final, nil
-}
-
-func hash160(b []byte) []byte {
-	h256 := sha256.New()
-	h256.Write(b)
-
-	rip160 := ripemd160.New()
-	rip160.Write(h256.Sum(nil))
-
-	return rip160.Sum(nil)
 }
